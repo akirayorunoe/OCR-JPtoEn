@@ -1,4 +1,5 @@
 # How to Use PDF Translator
+Currently work but with really low accuracy, change the config of --oem & --psm for your own sake
 
 ## Installation
 
