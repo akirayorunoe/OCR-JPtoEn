@@ -58,7 +58,7 @@ class ImageTextExtractor:
         
         # Áp dụng adaptive threshold để tạo ảnh nhị phân
         # thresh = cv2.adaptiveThreshold(invert, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        img_resize = cv2.resize(blurred,(0,0),fx=1,fy=1)
+        img_resize = cv2.resize(img,(0,0),fx=1.25,fy=1.25)
 
         # Sử dụng morphology để loại bỏ nhiễu và đặc biệt là kết cấu văn bản
         # Taking a matrix of size 5 as the kernel 
@@ -76,13 +76,22 @@ class ImageTextExtractor:
         # cv2.destroyAllWindows()
         # cv2.waitKey(1)
         
-        return img
+        return img_resize
     
     def find_paragraph(self, image):
+        inverted = cv2.bitwise_not(image)
+        gray = cv2.cvtColor(inverted, cv2.COLOR_BGR2GRAY)
+        # create background image
+        bg = cv2.dilate(gray, np.ones((5,5), dtype=np.uint8))
+        bg = cv2.GaussianBlur(bg, (5,5), 1)
+        # subtract out background from source
+        src_no_bg = 255-cv2.absdiff(gray, bg)
+
         # Load image, grayscale, Gaussian blur, Otsu's threshold
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (1,1), 0)
-        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        
+        blur = cv2.GaussianBlur(src_no_bg, (5,5), 0)
+        thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+
 
         # Create rectangular structuring element and dilate
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
@@ -99,13 +108,14 @@ class ImageTextExtractor:
             text = pytesseract.image_to_string(roi, config = self.custom_config)
             # print(f"Bounding Box: ({x}, {y}, {w}, {h}), Text: {text}")
             self.extracted_texts.append(text)
-
+        # cv2.rectangle(image, (x, y), (x + w, y + h), (36,255,12), 2)
         # cv2.imshow('thresh', thresh)
+        # cv2.imshow('src_no_bg', src_no_bg)
         # cv2.imshow('dilate', dilate)
         # cv2.imshow('image', image)
         # cv2.waitKey()
         return image
-    
+
     def extract_text_from_image(self, image_path):
         img = self.preprocess_image(image_path)
         # Các tham số được thêm vào cấu hình (https://github.com/tesseract-ocr/tessdoc/blob/main/tess3/ControlParams.md)
@@ -114,7 +124,7 @@ class ImageTextExtractor:
         self.extracted_texts = []
 
         self.rect_img(img)
-        combined_text = '\n'.join(self.extracted_texts[::-1])
+        combined_text = ''.join(self.extracted_texts[::-1])
  
         # text = pytesseract.image_to_string(img, config = self.custom_config)
 
@@ -158,7 +168,7 @@ if __name__ == "__main__":
     output_pdf_path = "/Users/innotech/Downloads/translated_pdfs/merged_translated2.pdf"
 
     pdf_translator = ImageTextExtractor()
-    pdf_translator.extract_text_from_image('/Users/innotech/Desktop/OCR-JPtoEn/temp_image_53_0.jpg')
+    pdf_translator.extract_text_from_image('/Users/innotech/Desktop/OCR-JPtoEn/temp_image_0_0.jpg')
 
 ###       Note:
 #         # The --oem parameter specifies the OCR Engine Mode, which determines which OCR engine Tesseract should use. There are several OEM modes available:
