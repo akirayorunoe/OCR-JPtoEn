@@ -78,6 +78,21 @@ class ImageTextExtractor:
         
         return img_resize
     
+    def thin_font(self,image):
+        image = cv2.bitwise_not(image)
+        kernel = np.ones((2,2),np.uint8)
+        image = cv2.erode(image, kernel, iterations=1)
+        image = cv2.bitwise_not(image)
+        return (image)
+    def noise_removal(self, image):
+        kernel = np.ones((1, 1), np.uint8)
+        image = cv2.dilate(image, kernel, iterations=1)
+        kernel = np.ones((1, 1), np.uint8)
+        image = cv2.erode(image, kernel, iterations=1)
+        image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+        image = cv2.medianBlur(image, 3)
+        return (image)
+    
     def find_paragraph(self, image):
         inverted = cv2.bitwise_not(image)
         gray = cv2.cvtColor(inverted, cv2.COLOR_BGR2GRAY)
@@ -85,17 +100,23 @@ class ImageTextExtractor:
         bg = cv2.dilate(gray, np.ones((5,5), dtype=np.uint8))
         bg = cv2.GaussianBlur(bg, (5,5), 1)
         # subtract out background from source
-        src_no_bg = 255-cv2.absdiff(gray, bg)
+        src_no_bg = 240-cv2.absdiff(gray, bg)
+        src_no_bg = self.thin_font(src_no_bg)
+        # sharpening
+        kernel_S = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        src_no_bg = cv2.filter2D(src_no_bg, -1, kernel_S)
+
+        # src_no_bg = self.noise_removal(src_no_bg)
 
         # Load image, grayscale, Gaussian blur, Otsu's threshold
         
-        blur = cv2.GaussianBlur(src_no_bg, (5,5), 0)
-        thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        # blur = cv2.GaussianBlur(src_no_bg, (5,5), 0)
+        thresh = cv2.threshold(src_no_bg, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
 
         # Create rectangular structuring element and dilate
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
-        dilate = cv2.dilate(thresh, kernel, iterations=4)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7,10))
+        dilate = cv2.dilate(thresh, kernel, iterations=3)
 
         # Find contours and draw rectangle
         cnts = cv2.findContours(dilate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
