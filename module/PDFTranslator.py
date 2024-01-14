@@ -23,7 +23,6 @@ class PdfTranslator:
 
         # Create a new PDF document for translated text
         pdf_with_translated_text = fitz.open()
-
         for page_number in range(10,11):  # pdf_document.page_count
             # Extract images from the current page of the PDF
             page = pdf_document[page_number]
@@ -96,7 +95,7 @@ class PdfTranslator:
                     )
                 # Remove temporary image file
                 os.remove(image_path)
-    
+
         # Save the new PDF document (use garbage=4, deflate=True to down size the file)
         pdf_with_translated_text.save(self.output_pdf_path, garbage=4, deflate=True)
 

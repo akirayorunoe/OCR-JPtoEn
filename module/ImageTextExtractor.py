@@ -30,12 +30,17 @@ import numpy as np
 import pytesseract
 from PIL import ImageFont, ImageDraw, Image
 from pytesseract import Output
+import easyocr
+
+from surya.detection import batch_inference
+from surya.model.segformer import load_model, load_processor
 
 class ImageTextExtractor:
     def __init__(self):
         os.environ['TESSDATA_PREFIX'] = 'tessdata'
         pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
-        self.custom_config = r'--oem 3 --psm 4 -l jpn_best+osd -c chop_enable=T -c use_new_state_cost=F -c segment_segcost_rating=F -c enable_new_segsearch=0 -c language_model_ngram_on=0 -c textord_force_make_prop_words=F -c edges_max_children_per_outline=50'
+        self.custom_config = r'--oem 3 --psm 4 -l jpn_best+equ+osd -c chop_enable=T -c use_new_state_cost=F -c segment_segcost_rating=F -c enable_new_segsearch=0 -c language_model_ngram_on=0 -c textord_force_make_prop_words=F -c edges_max_children_per_outline=50'
+        self.reader = easyocr.Reader(['ja', 'en'])
 
     def preprocess_image(self, image_path):
         img = cv2.imread(image_path)
@@ -68,6 +73,7 @@ class ImageTextExtractor:
         # img_dilation = cv2.dilate(img_resize, kernel, iterations=1) 
         
         # sharpening
+        # kernel_S = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         kernel_S = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
         sharp = cv2.filter2D(img_resize, -1, kernel_S)
 
@@ -84,6 +90,14 @@ class ImageTextExtractor:
         image = cv2.erode(image, kernel, iterations=1)
         image = cv2.bitwise_not(image)
         return (image)
+    
+    def thick_font(self,image):
+        image = cv2.bitwise_not(image)
+        kernel = np.ones((2,2),np.uint8)
+        image = cv2.dilate(image, kernel, iterations=1)
+        image = cv2.bitwise_not(image)
+        return (image)
+    
     def noise_removal(self, image):
         kernel = np.ones((1, 1), np.uint8)
         image = cv2.dilate(image, kernel, iterations=1)
@@ -93,14 +107,22 @@ class ImageTextExtractor:
         image = cv2.medianBlur(image, 3)
         return (image)
     
+    def is_bright(self,image):
+        blur = cv2.blur(image, (5, 5))  # With kernel size depending upon image size
+        if cv2.mean(blur)[0] > 127:  # The range for a pixel's value in grayscale is (0-255), 127 lies midway
+            return True # (127 - 255) denotes light image
+        else:
+            return False
+        
     def find_paragraph(self, image):
         inverted = cv2.bitwise_not(image)
-        gray = cv2.cvtColor(inverted, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         # create background image
-        bg = cv2.dilate(gray, np.ones((5,5), dtype=np.uint8))
-        bg = cv2.GaussianBlur(bg, (5,5), 1)
+        bg = cv2.dilate(gray, np.ones((7,7), dtype=np.uint8))
+        # bg = cv2.GaussianBlur(bg, (5,5), 1)
         # subtract out background from source
         src_no_bg = 240-cv2.absdiff(gray, bg)
+        src_no_bg = self.thick_font(src_no_bg)
         src_no_bg = self.thin_font(src_no_bg)
         # sharpening
         kernel_S = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
@@ -110,13 +132,14 @@ class ImageTextExtractor:
 
         # Load image, grayscale, Gaussian blur, Otsu's threshold
         
-        # blur = cv2.GaussianBlur(src_no_bg, (5,5), 0)
+        # blur = cv2.GaussianBlur(src_no_bg, (3,3), 0)
         thresh = cv2.threshold(src_no_bg, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
 
         # Create rectangular structuring element and dilate
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7,10))
-        dilate = cv2.dilate(thresh, kernel, iterations=3)
+        morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
+        dilate = cv2.dilate(morph, kernel, iterations=4)
 
         # Find contours and draw rectangle
         cnts = cv2.findContours(dilate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -126,12 +149,15 @@ class ImageTextExtractor:
             x, y, w, h = cv2.boundingRect(c)
             cv2.rectangle(image, (x, y), (x + w, y + h), (36,255,12), 2)
             roi = image[y:y + h, x:x + w]  # Extract the region of interest
+            # if not self.is_bright(roi):
+            #     roi = cv2.bitwise_not(roi)
             text = pytesseract.image_to_string(roi, config = self.custom_config)
             # print(f"Bounding Box: ({x}, {y}, {w}, {h}), Text: {text}")
             self.extracted_texts.append(text)
         # cv2.rectangle(image, (x, y), (x + w, y + h), (36,255,12), 2)
         # cv2.imshow('thresh', thresh)
         # cv2.imshow('src_no_bg', src_no_bg)
+        # cv2.imshow('morph', morph)
         # cv2.imshow('dilate', dilate)
         # cv2.imshow('image', image)
         # cv2.waitKey()
@@ -145,13 +171,53 @@ class ImageTextExtractor:
         self.extracted_texts = []
 
         self.rect_img(img)
+        # image = Image.open(image_path)
+        # predictions is a list of dicts, one per image
+        model, processor = load_model(), load_processor()
+        img_pil = Image.fromarray(np.uint8(img))
+        predictions = batch_inference([img_pil], model, processor)
+
+        for prediction in predictions:
+            bboxes = prediction.get('bboxes', [])
+            for bbox in bboxes:
+                # Extract text within each bounding box
+                x_min, y_min, x_max, y_max = bbox
+                
+                # Perform OCR on the cropped image using Tesseract
+                img_pil_cropped = Image.fromarray(np.uint8(img))
+                cropped_image = img_pil_cropped.crop((x_min, y_min, x_max, y_max))
+                
+                # Append the extracted text to the list
+                self.extracted_texts.append(cropped_image)
+        # Filter out non-string items from the list
+        self.extracted_texts = [item for item in self.extracted_texts if isinstance(item, str)]
+        # print(self.extracted_texts,'self.extracted_texts')
         combined_text = ''.join(self.extracted_texts[::-1])
+        return combined_text
+
+        # combined_text = ''.join(self.extracted_texts[::-1])
  
-        # text = pytesseract.image_to_string(img, config = self.custom_config)
+        # # text = pytesseract.image_to_string(img, config = self.custom_config)
 
-        # print(combined_text)
-        return combined_text.strip()
+        # # print(combined_text)
+        # return combined_text.strip()
 
+    # def extract_text_from_image_easyocr(self, image_path):
+    #     img = self.preprocess_image(image_path)
+    #     # Các tham số được thêm vào cấu hình (https://github.com/tesseract-ocr/tessdoc/blob/main/tess3/ControlParams.md)
+        
+    #     # Initialize the list to store extracted texts
+    #     self.extracted_texts = []
+
+    #     img = self.find_paragraph(img)
+    #     result = self.reader.readtext(img)
+    #     text_lines = [text_info[1] for text_info in result]
+    #     text = ''.join(text_lines)
+    #     # text = pytesseract.image_to_string(img, config = self.custom_config)
+
+    #     print(text)
+    #     return text.strip()
+    
     def rect_img(self, img):
         box = pytesseract.image_to_boxes(img, config = " -c tessedit_create_boxfile=1")
         data = pytesseract.image_to_data(img, config = " -c tessedit_create_boxfile=1")
@@ -189,7 +255,7 @@ if __name__ == "__main__":
     output_pdf_path = "/Users/innotech/Downloads/translated_pdfs/merged_translated2.pdf"
 
     pdf_translator = ImageTextExtractor()
-    pdf_translator.extract_text_from_image('/Users/innotech/Desktop/OCR-JPtoEn/temp_image_0_0.jpg')
+    pdf_translator.extract_text_from_image('/Users/innotech/Desktop/OCR-JPtoEn/temp_image_53_0.jpg')
 
 ###       Note:
 #         # The --oem parameter specifies the OCR Engine Mode, which determines which OCR engine Tesseract should use. There are several OEM modes available:
