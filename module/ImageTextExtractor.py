@@ -32,15 +32,12 @@ from PIL import ImageFont, ImageDraw, Image
 from pytesseract import Output
 import easyocr
 
-from surya.detection import batch_inference
-from surya.model.segformer import load_model, load_processor
-
 class ImageTextExtractor:
     def __init__(self):
         os.environ['TESSDATA_PREFIX'] = 'tessdata'
         pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
-        self.custom_config = r'--oem 3 --psm 4 -l jpn_best+equ+osd -c chop_enable=T -c use_new_state_cost=F -c segment_segcost_rating=F -c enable_new_segsearch=0 -c language_model_ngram_on=0 -c textord_force_make_prop_words=F -c edges_max_children_per_outline=50'
-        self.reader = easyocr.Reader(['ja', 'en'])
+        self.custom_config = r'--oem 3 --psm 4 -l jpn_fast+osd -c chop_enable=T -c use_new_state_cost=F -c segment_segcost_rating=F -c enable_new_segsearch=0 -c language_model_ngram_on=0 -c textord_force_make_prop_words=F -c edges_max_children_per_outline=50'
+        # self.reader = easyocr.Reader(['ja', 'en'])
 
     def preprocess_image(self, image_path):
         img = cv2.imread(image_path)
@@ -63,7 +60,7 @@ class ImageTextExtractor:
         
         # Áp dụng adaptive threshold để tạo ảnh nhị phân
         # thresh = cv2.adaptiveThreshold(invert, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        img_resize = cv2.resize(img,(0,0),fx=1.25,fy=1.25)
+        img_resize = cv2.resize(img,(0,0),fx=1.25,fy=1.25,interpolation = cv2.INTER_CUBIC)
 
         # Sử dụng morphology để loại bỏ nhiễu và đặc biệt là kết cấu văn bản
         # Taking a matrix of size 5 as the kernel 
@@ -116,31 +113,34 @@ class ImageTextExtractor:
         
     def find_paragraph(self, image):
         inverted = cv2.bitwise_not(image)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(inverted, cv2.COLOR_BGR2GRAY)
         # create background image
         bg = cv2.dilate(gray, np.ones((7,7), dtype=np.uint8))
         # bg = cv2.GaussianBlur(bg, (5,5), 1)
         # subtract out background from source
-        src_no_bg = 240-cv2.absdiff(gray, bg)
+        src_no_bg = 255-cv2.absdiff(gray, bg)
         src_no_bg = self.thick_font(src_no_bg)
         src_no_bg = self.thin_font(src_no_bg)
         # sharpening
         kernel_S = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         src_no_bg = cv2.filter2D(src_no_bg, -1, kernel_S)
-
+        src_no_bg = cv2.filter2D(src_no_bg, -1, kernel_S)
         # src_no_bg = self.noise_removal(src_no_bg)
 
         # Load image, grayscale, Gaussian blur, Otsu's threshold
         
-        # blur = cv2.GaussianBlur(src_no_bg, (3,3), 0)
+        blur = cv2.GaussianBlur(src_no_bg, (3,3), 0)
         thresh = cv2.threshold(src_no_bg, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
 
 
         # Create rectangular structuring element and dilate
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7,10))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
         morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
-        dilate = cv2.dilate(morph, kernel, iterations=4)
+        dilate = cv2.dilate(morph, kernel, iterations=9)
 
+        # Để tách hai đoạn văn bản cạnh nhau thành hai đoạn riêng biệt
+        # Giảm kích thước kernel khi tạo structuring element cho dilate và morphologyEx
+        # Tăng giá trị của iterations cho morphologyEx và dilate
         # Find contours and draw rectangle
         cnts = cv2.findContours(dilate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -149,8 +149,9 @@ class ImageTextExtractor:
             x, y, w, h = cv2.boundingRect(c)
             cv2.rectangle(image, (x, y), (x + w, y + h), (36,255,12), 2)
             roi = image[y:y + h, x:x + w]  # Extract the region of interest
-            # if not self.is_bright(roi):
-            #     roi = cv2.bitwise_not(roi)
+            if not self.is_bright(roi):
+                roi = cv2.bitwise_not(roi)
+                roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             text = pytesseract.image_to_string(roi, config = self.custom_config)
             # print(f"Bounding Box: ({x}, {y}, {w}, {h}), Text: {text}")
             self.extracted_texts.append(text)
@@ -171,36 +172,13 @@ class ImageTextExtractor:
         self.extracted_texts = []
 
         self.rect_img(img)
-        # image = Image.open(image_path)
-        # predictions is a list of dicts, one per image
-        model, processor = load_model(), load_processor()
-        img_pil = Image.fromarray(np.uint8(img))
-        predictions = batch_inference([img_pil], model, processor)
 
-        for prediction in predictions:
-            bboxes = prediction.get('bboxes', [])
-            for bbox in bboxes:
-                # Extract text within each bounding box
-                x_min, y_min, x_max, y_max = bbox
-                
-                # Perform OCR on the cropped image using Tesseract
-                img_pil_cropped = Image.fromarray(np.uint8(img))
-                cropped_image = img_pil_cropped.crop((x_min, y_min, x_max, y_max))
-                
-                # Append the extracted text to the list
-                self.extracted_texts.append(cropped_image)
-        # Filter out non-string items from the list
-        self.extracted_texts = [item for item in self.extracted_texts if isinstance(item, str)]
-        # print(self.extracted_texts,'self.extracted_texts')
         combined_text = ''.join(self.extracted_texts[::-1])
-        return combined_text
-
-        # combined_text = ''.join(self.extracted_texts[::-1])
  
-        # # text = pytesseract.image_to_string(img, config = self.custom_config)
+        # text = pytesseract.image_to_string(img, config = self.custom_config)
 
-        # # print(combined_text)
-        # return combined_text.strip()
+        # print(combined_text)
+        return combined_text
 
     # def extract_text_from_image_easyocr(self, image_path):
     #     img = self.preprocess_image(image_path)
