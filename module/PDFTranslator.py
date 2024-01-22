@@ -23,7 +23,7 @@ class PdfTranslator:
 
         # Create a new PDF document for translated text
         pdf_with_translated_text = fitz.open()
-        for page_number in range(53,56):  # pdf_document.page_count
+        for page_number in range(pdf_document.page_count):  # pdf_document.page_count
             # Extract images from he current page of the PDF
             page = pdf_document[page_number]
             image_list = page.get_images(full=True)

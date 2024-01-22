@@ -115,7 +115,7 @@ class ImageTextExtractor:
         inverted = cv2.bitwise_not(image)
         gray = cv2.cvtColor(inverted, cv2.COLOR_BGR2GRAY)
         # create background image
-        bg = cv2.dilate(gray, np.ones((7,7), dtype=np.uint8))
+        bg = cv2.dilate(gray, np.ones((6,6), dtype=np.uint8))
         # bg = cv2.GaussianBlur(bg, (5,5), 1)
         # subtract out background from source
         src_no_bg = 255-cv2.absdiff(gray, bg)
