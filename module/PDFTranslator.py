@@ -2,13 +2,14 @@ import os
 import fitz  # PyMuPDF
 
 from module.ImageTextExtractor import ImageTextExtractor
+from module.ImageTextExtractorEasyOCR import ImageTextExtractorEasyOCR
 from module.LanguageTranslator import LanguageTranslator
 
 class PdfTranslator:
     def __init__(self, input_pdf_path, output_pdf_path,target_language='en'):
         self.input_pdf_path = input_pdf_path
         self.output_pdf_path = output_pdf_path
-        self.image_text_extractor = ImageTextExtractor()
+        self.image_text_extractor = ImageTextExtractorEasyOCR()
         self.translator = LanguageTranslator()
         self.target_language = target_language
 
@@ -42,7 +43,6 @@ class PdfTranslator:
                 # Extract text from the image and translate
                 text = self.image_text_extractor.extract_text_from_image(image_path)
                 translated_text = self.translator.translate_text(text,self.target_language)
-
                 # Add the translated text to the new PDF document
                 pdf_with_translated_text.new_page(width=int(page.rect.width) * 2, height=int(page.rect.height))
                 page_translated = pdf_with_translated_text[-1]
