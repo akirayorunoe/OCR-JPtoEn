@@ -29,6 +29,8 @@ First, install the required dependencies by running the following command in you
 
 ```bash
 pip install -r requirements.txt
+
+pip install fitz
 ```
 
 Now, you can run the PDF Translator script:
