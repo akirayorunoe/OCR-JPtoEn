@@ -10,7 +10,7 @@ import easyocr
 class ImageTextExtractorEasyOCR:
     def __init__(self):
         os.environ['TESSDATA_PREFIX'] = 'tessdata'
-        pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
+        pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract.exe'
         self.custom_config = r'--oem 3 --psm 4 -l jpn_fast+osd -c chop_enable=T -c use_new_state_cost=F -c segment_segcost_rating=F -c enable_new_segsearch=0 -c language_model_ngram_on=0 -c textord_force_make_prop_words=F -c edges_max_children_per_outline=50'
         self.reader = easyocr.Reader(['ja', 'en'])
 
