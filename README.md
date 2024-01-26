@@ -11,7 +11,27 @@ Go to the project
 cd OCR-JPtoEn
 ```
 
-Before running the script, you need to change the input_pdf_path and output_pdf_path in your script (main.py) to your own file paths. Open a terminal and create a virtual environment using the following commands:
+Before running the script, you need to download + install [tesseract](https://tesseract-ocr.github.io/tessdoc/Installation.html) and change the input_pdf_path and output_pdf_path in your script (main.py) to your own file paths. Example:
+
+```bash
+    # Mac
+    input_pdf_path = "/Users/innotech/Downloads/[106424].pdf"
+    output_pdf_path = "/Users/innotech/Downloads/translated_pdfs/merged_translated.pdf"
+    # Window
+    input_pdf_path = "pdf\_106424_.pdf"
+    output_pdf_path = "pdf\_106424_m.pdf"
+```
+
+Change tesseract cmd PATH in module/ImageTextExtractorEasyOCR (or ImageTextExtractor which use tesseract only). Example:
+
+```bash
+    # Mac
+    pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
+    # Window
+    pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract.exe'
+```
+
+Open a terminal and create a virtual environment using the following commands:
 
 ```bash
 python3 -m venv venv
@@ -23,14 +43,13 @@ Activate the virtual environment:
 [Mac] source venv/bin/activate
 
 [Window] venv\Scripts\activate.bat
+# Note: Use activate.ps1 if you use powershell
 ```
 
 First, install the required dependencies by running the following command in your terminal:
 
 ```bash
 pip install -r requirements.txt
-
-pip install fitz
 ```
 
 Now, you can run the PDF Translator script:
