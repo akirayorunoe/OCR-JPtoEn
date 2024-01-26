@@ -55,7 +55,7 @@ pip install -r requirements.txt
 Now, you can run the PDF Translator script:
 
 ```bash
-python3 main.py
+python main.py
 ```
 
 Remember to deactivate the virtual environment when you're done:
