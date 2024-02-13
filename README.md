@@ -45,9 +45,9 @@ Activate the virtual environment:
 [Window] venv\Scripts\activate
 # Note: If you run into issue: Open powershell the type
 
-Set-ExecutionPolicy RemoteSigned
+#Set-ExecutionPolicy RemoteSigned
 
-[A] Yes to All
+#[A] Yes to All
 
 ```
 
