@@ -43,7 +43,7 @@ Activate the virtual environment:
 [Mac] source venv/bin/activate
 
 [Window] venv\Scripts\activate
-# Note: If you run into issue: Open powershell the type
+# Note: If you run into issue: Open powershell as admin and type
 
 #Set-ExecutionPolicy RemoteSigned
 
