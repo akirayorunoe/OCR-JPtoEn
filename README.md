@@ -44,10 +44,11 @@ Activate the virtual environment:
 
 [Window] venv\Scripts\activate
 # Note: If you run into issue: Open powershell the type
-```
+
 Set-ExecutionPolicy RemoteSigned
+
 [A] Yes to All
-```
+
 ```
 
 First, install the required dependencies by running the following command in your terminal:
