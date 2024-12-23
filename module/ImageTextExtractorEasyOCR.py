@@ -6,56 +6,165 @@ import pytesseract
 from PIL import ImageFont, ImageDraw, Image
 from pytesseract import Output
 import easyocr
+import torch
+import math
+from io import BytesIO
 
 class ImageTextExtractorEasyOCR:
     def __init__(self):
         os.environ['TESSDATA_PREFIX'] = 'tessdata'
-        pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
+        pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract.exe'
         self.custom_config = r'--oem 3 --psm 4 -l jpn_fast+osd -c chop_enable=T -c use_new_state_cost=F -c segment_segcost_rating=F -c enable_new_segsearch=0 -c language_model_ngram_on=0 -c textord_force_make_prop_words=F -c edges_max_children_per_outline=50'
-        self.reader = easyocr.Reader(['ja', 'en'])
+        # Initialize EasyOCR with better detection parameters
+        self.reader = easyocr.Reader(['ja', 'en'], gpu=True if torch.cuda.is_available() else False, 
+                                   model_storage_directory='./models',
+                                   download_enabled=True,
+                                   recog_network='japanese_g2')
 
-    def preprocess_image(self, image_path):
-        img = cv2.imread(image_path)
-        invert = np.invert(img)
+    def _read_image(self, image_input):
+        """Helper method to read image from either file path or bytes"""
+        if isinstance(image_input, str):
+            # If input is a file path
+            return cv2.imread(image_input)
+        elif isinstance(image_input, BytesIO):
+            # If input is BytesIO object
+            image_input.seek(0)
+            file_bytes = np.asarray(bytearray(image_input.read()), dtype=np.uint8)
+            return cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        elif isinstance(image_input, bytes):
+            # If input is raw bytes
+            file_bytes = np.asarray(bytearray(image_input), dtype=np.uint8)
+            return cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        else:
+            raise ValueError("Unsupported image input type")
 
-        # Chuyển ảnh sang đen trắng
+    def preprocess_image(self, image_input):
+        # Read image using the helper method
+        img = self._read_image(image_input)
+        if img is None:
+            raise ValueError("Could not read image")
+            
+        # Store original image
+        original = img.copy()
+        
+        # Convert to grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Áp dụng GaussianBlur để giảm nhiễu
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # Invert the image
-        inverted = cv2.bitwise_not(invert)
+        # Check if image is bright or dark and adjust preprocessing accordingly
+        is_bright = self.is_bright(gray)
         
-        # Extract the saturation channel (assuming the image is in BGR format)
-        _, saturation, _ = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
-
-        # Apply adaptive thresholding
-        binary = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
+        # Create different versions of the image for better text detection
+        preprocessed_versions = []
         
-        # Áp dụng adaptive threshold để tạo ảnh nhị phân
-        # thresh = cv2.adaptiveThreshold(invert, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        img_resize = cv2.resize(img,(0,0),fx=1.25,fy=1.25,interpolation = cv2.INTER_CUBIC)
-
-        # Sử dụng morphology để loại bỏ nhiễu và đặc biệt là kết cấu văn bản
-        # Taking a matrix of size 5 as the kernel 
-        kernel = np.ones((5, 5), np.uint8)  
-        # morph = cv2.morphologyEx(img_resize, cv2.MORPH_CLOSE, kernel, iterations=2)
-        # img_erosion = cv2.erode(img_resize, kernel, iterations=1) 
-        # img_dilation = cv2.dilate(img_resize, kernel, iterations=1) 
+        # Version 1: Enhanced contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        contrast_enhanced = clahe.apply(gray)
+        preprocessed_versions.append(contrast_enhanced)
         
-        # sharpening
-        # kernel_S = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        kernel_S = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-        sharp = cv2.filter2D(img_resize, -1, kernel_S)
-
-        # cv2.imshow("sharp", sharp)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-        # cv2.waitKey(1)
+        # Version 2: Binarization for dark text on light background
+        if is_bright:
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        else:
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        preprocessed_versions.append(binary)
         
-        return img
-    
+        # Version 3: Adaptive thresholding
+        adaptive_thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                              cv2.THRESH_BINARY, 11, 2)
+        preprocessed_versions.append(adaptive_thresh)
+        
+        # Version 4: Color-based preprocessing for colored text
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        s_channel = hsv[:,:,1]
+        v_channel = hsv[:,:,2]
+        preprocessed_versions.append(s_channel)
+        preprocessed_versions.append(v_channel)
+        
+        return {
+            'original': original,
+            'versions': preprocessed_versions,
+            'is_bright': is_bright
+        }
+
+    def extract_text_with_position(self, image_input):
+        """
+        Enhanced text extraction with better handling of different fonts, sizes, and colors
+        """
+        # Preprocess image with multiple versions
+        processed_images = self.preprocess_image(image_input)
+        
+        # Get image dimensions
+        img_height, img_width = processed_images['original'].shape[:2]
+        
+        # Configure reader parameters for better detection
+        reader_kwargs = {
+            'decoder': 'beamsearch',
+            'beamWidth': 5,
+            'batch_size': 8,
+            'contrast_ths': 0.1,  # Lower threshold for better detection of low-contrast text
+            'adjust_contrast': 0.5,
+            'width_ths': 0.5,  # More tolerant width threshold
+            'height_ths': 0.5   # More tolerant height threshold
+        }
+        
+        all_results = []
+        # Process each version of the preprocessed image
+        for idx, img_version in enumerate(processed_images['versions']):
+            try:
+                results = self.reader.readtext(img_version, **reader_kwargs)
+                all_results.extend(results)
+            except Exception as e:
+                print(f"Error processing version {idx}: {str(e)}")
+                continue
+        
+        # Merge and deduplicate results
+        text_instances = []
+        seen_boxes = set()
+        
+        for (bbox, text, prob) in all_results:
+            # Create a hashable version of the bbox for deduplication
+            bbox_key = tuple(tuple(point) for point in bbox)
+            
+            if bbox_key in seen_boxes or prob < 0.3:  # Skip duplicates and very low confidence
+                continue
+                
+            seen_boxes.add(bbox_key)
+            
+            # Get coordinates and calculate dimensions
+            top_left, top_right, bottom_right, bottom_left = bbox
+            w = abs(top_right[0] - top_left[0])
+            h = abs(bottom_left[1] - top_left[1])
+            
+            # Determine text orientation
+            # More sophisticated angle detection
+            dx = top_right[0] - top_left[0]
+            dy = top_right[1] - top_left[1]
+            angle = math.degrees(math.atan2(dy, dx))
+            if abs(angle) > 45:  # Vertical text
+                angle = 90
+            else:  # Horizontal text
+                angle = 0
+            
+            # Calculate relative size for better font size estimation
+            relative_size = (w * h) / (img_width * img_height)
+            
+            text_instances.append({
+                'text': text,
+                'bbox': bbox,
+                'width': int(w),
+                'height': int(h),
+                'angle': angle,
+                'confidence': prob,
+                'relative_size': relative_size,
+                'estimated_font_size': int(h * 0.7)  # Rough estimate of font size based on height
+            })
+        
+        # Sort by confidence
+        text_instances.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Return both text instances and image dimensions
+        return text_instances, (img_width, img_height)
+
     def thin_font(self,image):
         image = cv2.bitwise_not(image)
         kernel = np.ones((2,2),np.uint8)
@@ -96,8 +205,8 @@ class ImageTextExtractorEasyOCR:
         # return the edged image
         return edged
         
-    def extract_text_from_image(self, image_path):
-        img = self.preprocess_image(image_path)
+    def extract_text_from_image(self, image_input):
+        img = self.preprocess_image(image_input)
         # Các tham số được thêm vào cấu hình (https://github.com/tesseract-ocr/tessdoc/blob/main/tess3/ControlParams.md)
         
         # Initialize the list to store extracted texts
@@ -187,7 +296,7 @@ class ImageTextExtractorEasyOCR:
         ###
 
         ### For word
-        # for z, a in enumerate(data.splitlines()):
+        # for z, a in enumerate(data.splitlines()))):
         #     if z != 0:
         #         a = a.split()
         #         if len(a) == 12:
@@ -211,4 +320,3 @@ if __name__ == "__main__":
 
     pdf_translator = ImageTextExtractorEasyOCR()
     pdf_translator.extract_text_from_image('/Users/innotech/Desktop/OCR-JPtoEn/temp_image_53_0.jpg')
-
